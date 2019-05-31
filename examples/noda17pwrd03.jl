@@ -141,6 +141,8 @@ function simulate(intg_type)
 	iout_art = load_file(join([path, "current.txt"]), 2);
 	ent_freq = laplace_transform(Vector{ComplexF64}(source[:,2]),
 	                             Vector{Float64}(source[:,1]), -1.0im*sk);
+	we = fill_incidence_imm(electrodes, nodes);
+	ye = zeros(ComplexF64, nn, nn);
 	## Freq. loop
 	for i = 1:nf
 		jw = 1.0im*sk[i];
@@ -154,11 +156,17 @@ function simulate(intg_type)
 		ref_l = ref_t;
 		zl, zt = impedances_images(electrodes, images, zl, zt, k1, jw, mur, kappa,
 								   ref_l, ref_t, max_eval, req_abs_error,
-								   req_rel_error, error_norm, intg_type)
-	    yn = mAT*inv(zt)*mA + mBT*inv(zl)*mB;
-		yn[1,1] += gf;
-	    exci[1] = ent_freq[i]*gf;
-	    vout[i,:] = yn\exci;
+								   req_rel_error, error_norm, intg_type);
+		ie = zeros(ComplexF64, size(we)[1]);
+		ie[1] = ent_freq[i]*gf;
+		ye[1,1] = gf;
+		fill_impedance_imm(we, ns, nn, zl, zt, ye);
+		u, il, it = solve_immittance(we, ie, ns, nn);
+		vout[i,:] = u;
+		#yn = mAT*inv(zt)*mA + mBT*inv(zl)*mB;
+		#yn[1,1] += gf;
+	    #exci[1] = ent_freq[i]*gf;
+	    #vout[i,:] = yn\exci;
 	end;
 
 	## Time response
@@ -187,12 +195,12 @@ end;
 
 outv, outi, source, vout_art, iout_art, t = @time simulate(INTG_DOUBLE);
 
-display(plot([t*1e9, source[:,1]*1e9, vout_art[:,1]], [outv, source[:,2], vout_art[:,2]],
-     	     xlims = (0, 50), ylims = (0, 80), xlabel="t (ns)", ylabel="V (V)",
-			 label=["calculated" "source" "article"],
-			 color=["red" "green" "blue"], marker=true, title="Vout"))
+plot([t*1e9, source[:,1]*1e9, vout_art[:,1]], [outv, source[:,2], vout_art[:,2]],
+	 xlims = (0, 50), ylims = (0, 80), xlabel="t (ns)", ylabel="V (V)",
+	 label=["calculated" "source" "article"],
+	 color=["red" "green" "blue"], marker=true, title="Vout")
 
-display(plot([t*1e9, iout_art[:,1]], [outi, iout_art[:,2]],
-		     xlims = (0, 50), ylims = (-0.2, 0.5), xlabel="t (ns)", ylabel="I (A)",
-			 label=["calculated" "article"],
-			 color=["red" "blue"], marker=true, title="Iout"))
+plot([t*1e9, iout_art[:,1]], [outi, iout_art[:,2]],
+     xlims = (0, 50), ylims = (-0.2, 0.5), xlabel="t (ns)", ylabel="I (A)",
+	 label=["calculated" "article"],
+	 color=["red" "blue"], marker=true, title="Iout")
