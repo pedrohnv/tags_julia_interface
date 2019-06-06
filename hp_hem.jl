@@ -270,12 +270,11 @@ function fill_incidence_imm(electrodes, nodes)
     return we
 end;
 
-function fill_impedance_imm(we, num_electrodes, num_nodes, zl, zt, ye)
+function fill_impedance_imm!(we, num_electrodes, num_nodes, zl, zt, ye)
     ccall(("fill_impedance_imm", "libhem_linalg"), Int,
           (Ref{Complex{Float64}}, UInt, UInt, Ref{Complex{Float64}},
            Ref{Complex{Float64}}, Ref{Complex{Float64}}),
           we, num_electrodes, num_nodes, zl, zt, ye);
-    return we
 end;
 
 function solve_immittance(we, ie, num_electrodes, num_nodes)

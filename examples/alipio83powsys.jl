@@ -93,7 +93,7 @@ function simulate(;freq, sigma, epsr, seg=0)
     zl, zt = impedances_images(electrodes, images, zl, zt, k1, jw, mur, kappa,
                                ref_l, ref_t, max_eval, req_abs_error,
                                req_rel_error, ERROR_PAIRED, intg_type);
-    fill_impedance_imm(we, ns, num_nodes, zl, zt, ye);
+    fill_impedance_imm!(we, ns, num_nodes, zl, zt, ye);
     u, il, it = solve_immittance(we, ie, ns, num_nodes);
     #zh = u[inj_node];
     ve = zeros(ComplexF64, 3, nx);

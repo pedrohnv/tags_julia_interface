@@ -160,7 +160,7 @@ function simulate(intg_type)
 		ie = zeros(ComplexF64, size(we)[1]);
 		ie[1] = ent_freq[i]*gf;
 		ye[1,1] = gf;
-		fill_impedance_imm(we, ns, nn, zl, zt, ye);
+		fill_impedance_imm!(we, ns, nn, zl, zt, ye);
 		u, il, it = solve_immittance(we, ie, ns, nn);
 		vout[i,:] = u;
 		#yn = mAT*inv(zt)*mA + mBT*inv(zl)*mB;

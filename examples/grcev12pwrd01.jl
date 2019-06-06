@@ -90,7 +90,7 @@ function simulate(gs::Int, nf::Int, intg_type)
         zl, zt = impedances_images(electrodes, images, zl, zt, k1, jw, mur, kappa,
                                    ref_l, ref_t, max_eval, req_abs_error,
                                    req_rel_error, error_norm, intg_type);
-        fill_impedance_imm(we, ns, num_nodes, zl, zt, ye);
+        fill_impedance_imm!(we, ns, num_nodes, zl, zt, ye);
         u, il, it = solve_immittance(we, ie, ns, num_nodes);
         zh[i] = u[inj_node];
         #yn = mAT*inv(zt)*mA + mBT*inv(zl)*mB;
