@@ -41,6 +41,21 @@ function laplace_transform(f::Vector{ComplexF64}, t::Vector{Float64}, s::Vector{
     return res
 end;
 
+function invlaplace_transform(out, t, dt, sc, sigma)
+	sigma(j, alpha=0.53836) = alpha + (1 - alpha)*cos(2*pi*j/n);
+	n = length(t);
+	kk = collect(0:1:n/2);
+	outlow = map(i -> out[:,1][Int(i+1)]*sigma(i), kk);
+	upperhalf = reverse(conj(outlow));
+	pop!(upperhalf);
+	lowerhalf = outlow;
+	pop!(lowerhalf);
+	append!(lowerhalf, upperhalf);
+	F = lowerhalf;
+	f = real(ifft(F));
+	return map(i -> exp(sc*t[i])/dt*f[i], 1:n)
+end
+
 #=
 Put in a function as execution in global scope has poor performance.
 The computation becomes really fast, but the pre-compiling Julia does
@@ -77,9 +92,6 @@ function simulate(intg_type)
 	sc = log(n^2)/T;
 	kk = collect(0:1:n/2);
 	dw = 2.0*pi/(n*dt);
-	function sigma(j, alpha=0.53836)
-	    return alpha + (1 - alpha)*cos(2*pi*j/n)
-	end;
 	sk = -1im*sc*ones(length(kk)) + dw*kk;
 	nf = length(sk);
 	freq = real(sk)/(2*pi);
@@ -120,9 +132,13 @@ function simulate(intg_type)
 		images[i] = new_electrode(start_point, end_point, r, zi);
 	end
 
-	mA, mB = incidence(electrodes, nodes);
-	mAT = transpose(mA);
-	mBT = transpose(mB);
+	#mA, mB = incidence(electrodes, nodes);
+	#mAT = transpose(mA);
+	#mBT = transpose(mB);
+	#mCT = mA + mB/2;
+	#mDT = mA - mB/2;
+	#mC = transpose(mCT);
+	#mD = transpose(mDT);
 	#yn = zeros(Complex{Float64}, (nn,nn));
 	zl = zeros(Complex{Float64}, (ns,ns));
 	zt = zeros(Complex{Float64}, (ns,ns));
@@ -138,7 +154,7 @@ function simulate(intg_type)
 	source = load_file(join([path, "source.txt"]), 2);
 	source[:,1] = source[:,1]*1e-9;
 	vout_art = load_file(join([path, "voltage.txt"]), 2);
-	iout_art = load_file(join([path, "current.txt"]), 2);
+	iout_art = load_file(@bijoin([path, "current.txt"]), 2);
 	ent_freq = laplace_transform(Vector{ComplexF64}(source[:,2]),
 	                             Vector{Float64}(source[:,1]), -1.0im*sk);
 	we = fill_incidence_imm(electrodes, nodes);
@@ -161,35 +177,21 @@ function simulate(intg_type)
 		ie[1] = ent_freq[i]*gf;
 		ye[1,1] = gf;
 		fill_impedance_imm!(we, ns, nn, zl, zt, ye);
+		#we = [ye mBT mAT; -mB zl zeros(ns, ns); -mA zeros(ns, ns) zt]
 		u, il, it = solve_immittance(we, ie, ns, nn);
 		vout[i,:] = u;
+
 		#yn = mAT*inv(zt)*mA + mBT*inv(zl)*mB;
+		#yn = mBT*inv(zl)*mB + mC*inv(zt)./2*mCT + mD*inv(zt)./2*mDT;
 		#yn[1,1] += gf;
 	    #exci[1] = ent_freq[i]*gf;
 	    #vout[i,:] = yn\exci;
 	end;
 
 	## Time response
-	outlow = map(i -> vout[:,1][Int(i+1)]*sigma(i), kk);
-	upperhalf = reverse(conj(outlow));
-	pop!(upperhalf);
-	lowerhalf = outlow;
-	pop!(lowerhalf);
-	append!(lowerhalf, upperhalf);
-	F = lowerhalf;
-	f = real(ifft(F));
-	outv = map(i -> exp(sc*t[i])/dt*f[i], 1:length(t));
-	# ======
+	outv = invlaplace_transform(vout, t, dt, sc);
 	iout = -(vout[:,1] - ent_freq)*gf;
-	outlow = map(i -> iout[:,1][Int(i+1)]*sigma(i), kk);
-	upperhalf = reverse(conj(outlow));
-	pop!(upperhalf);
-	lowerhalf = outlow;
-	pop!(lowerhalf);
-	append!(lowerhalf, upperhalf);
-	F = lowerhalf;
-	f = real(ifft(F));
-	outi = map(i -> exp(sc*t[i])/dt*f[i], 1:length(t));
+	outi = invlaplace_transform(iout, t, dt, sc);
 	return outv, outi, source, vout_art, iout_art, t
 end;
 
