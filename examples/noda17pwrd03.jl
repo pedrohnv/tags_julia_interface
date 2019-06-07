@@ -41,7 +41,7 @@ function laplace_transform(f::Vector{ComplexF64}, t::Vector{Float64}, s::Vector{
     return res
 end;
 
-function invlaplace_transform(out, t, dt, sc, sigma)
+function invlaplace_transform(out, t, dt, sc)
 	sigma(j, alpha=0.53836) = alpha + (1 - alpha)*cos(2*pi*j/n);
 	n = length(t);
 	kk = collect(0:1:n/2);
@@ -154,7 +154,7 @@ function simulate(intg_type)
 	source = load_file(join([path, "source.txt"]), 2);
 	source[:,1] = source[:,1]*1e-9;
 	vout_art = load_file(join([path, "voltage.txt"]), 2);
-	iout_art = load_file(@bijoin([path, "current.txt"]), 2);
+	iout_art = load_file(join([path, "current.txt"]), 2);
 	ent_freq = laplace_transform(Vector{ComplexF64}(source[:,2]),
 	                             Vector{Float64}(source[:,1]), -1.0im*sk);
 	we = fill_incidence_imm(electrodes, nodes);
