@@ -1,122 +1,167 @@
-#=
-Reproducing the results in [1] for a grounding grid.
-Execution time is expected to be up to 40 min.
-
+#= Reproducing the results in [1] for a grounding grid.
 [1] L. D. Grcev and M. Heimbach, "Frequency dependent and transient
 characteristics of substation grounding systems," in IEEE Transactions on
 Power Delivery, vol. 12, no. 1, pp. 172-178, Jan. 1997.
 doi: 10.1109/61.568238
 =#
 using Plots
-
-plotly()
-#pyplot()
+pyplot()
 
 if Sys.iswindows()
-    include("..\\hp_hem.jl");
+    include("..\\hphem.jl")
 else
-    include("../hp_hem.jl");
+    include("../hphem.jl")
 end
 
-function simulate(gs::Int, nf::Int, intg_type)
-    ## Parameters
-    # Soil
-    mu0 = pi*4e-7;
-    mur = 1.0;
-    eps0 = 8.854e-12;
-    epsr = 10;
-    sigma1 = 1.0/1000.0;
+"""
+Runs the simulation.
 
-    # Integration Parameters
-    max_eval = 0; #no limit
-    req_abs_error = 1e-3;
-    req_rel_error = 1e-4;
-    error_norm = 1; #paired
+Parameters
+----------
+	gs : Int, square grid side length (in meters). A multiple of 10 is expected.
+	nfrac : the fraction of the wave length in soil that the segments will have
+	freq : array of frequencies of interst
+	mhem : Bool, use modified HEM formulation (frequency independet integrals)?
 
-    # Frequencies
-    freq = exp10.(range(2, stop=6.4, length=nf)); #logspace
-    omega = 2*pi*freq[nf];
-    lambda = (2*pi/omega)*(1/sqrt( epsr*eps0*mu0/2*(1 + sqrt(1 + (sigma1/(omega*epsr*eps0))^2)) ));
-    frac = lambda/10; #for segmentation
+Returns
+-------
+	zh : the harmonic impedance of the grid for a current injected at its edge
+	gpd_point : ground potential at points
+	points : where ground potential was calculated
+	electrodes : list of Electrodes of the grid
+"""
+function simulate(gs::Int, nfrac, freq, mhem=true)
+	## Parameters
+	# Soil
+	mu0 = MU0
+	mur = 1.0
+	eps0 = EPS0
+	epsr = 10
+	σ1 = 1.0/1000.0
+	# Frequencies
+	nf = length(freq)
+	Ω = 2*pi*freq[nf]
+	# smallest wave length:
+	λ = (2*pi/Ω)*(1/sqrt( epsr*eps0*mu0/2*(1 + sqrt(1 + (σ1/(Ω*epsr*eps0))^2)) ))
+	frac = λ/nfrac  # for segmentation
 
-    # Grid
-    r = 7e-3;
-    h = -0.5;
-    l = gs;
-    n = Int(gs/10);
-    elecs = electrode_grid(l, n, l, n, h, r);
-    electrodes, nodes =  seg_electrode_list(elecs, frac);
-    num_electrodes= ns = length(electrodes)
-    num_nodes = size(nodes)[1]
-    inj_node = matchrow([0.,0.,h], nodes)
+	# Grid
+	r = 7e-3
+	h = -0.5
+	l = gs
+	n = Int(gs/10) + 1
+	num_seg = Int( ceil(gs/((n - 1)*frac)) )
+	grid = Grid(n, n, l, l, num_seg, num_seg, r, h)
+	electrodes, nodes = electrode_grid(grid)
+	num_electrodes = ns = length(electrodes)
+	num_nodes = nn = size(nodes)[2]
+	inj_node = matchcol([0.,0.,h], nodes)
 
-    #create images
-    images = Array{Electrode}(undef, ns);
-    for i=1:ns
-        images;
-        start_point = [electrodes[i].start_point[1],
-                       electrodes[i].start_point[2],
-                       -electrodes[i].start_point[3]];
-        end_point = [electrodes[i].end_point[1],
-                     electrodes[i].end_point[2],
-                         -electrodes[i].end_point[3]];
-        r = electrodes[i].radius;
-        zi = electrodes[i].zi;
-        images[i] = new_electrode(start_point, end_point, r, zi);
+	# create images
+	images = Array{Electrode}(undef, ns)
+	for i=1:ns
+		start_point = [electrodes[i].start_point[1],
+		               electrodes[i].start_point[2],
+					   -electrodes[i].start_point[3]]
+	    end_point = [electrodes[i].end_point[1],
+		             electrodes[i].end_point[2],
+	   		     	 -electrodes[i].end_point[3]]
+	    r = electrodes[i].radius
+		images[i] = new_electrode(start_point, end_point, r)
+	end
+	a, b = fill_incidence_adm(electrodes, nodes)
+	zh = Array{ComplexF64}(undef, nf)
+
+	# Integration Parameters
+	max_eval = 0  # no limit
+	req_abs_error = 1e-5
+	req_rel_error = 1e-5
+	if mhem
+		potzl, potzt = calculate_impedances(electrodes, 0.0, 0.0, 0.0, 0.0, max_eval,
+											req_abs_error, req_rel_error, INTG_MHEM)
+		potzli, potzti = impedances_images(electrodes, images, 0.0, 0.0, 0.0,
+										   0.0, 1.0, 1.0, max_eval, req_abs_error,
+										   req_rel_error, INTG_MHEM)
+	end
+	# Frequency loop, Run in parallel:
+	zls = [Array{ComplexF64}(undef, (ns,ns)) for t = 1:Threads.nthreads()]
+	zts = [Array{ComplexF64}(undef, (ns,ns)) for t = 1:Threads.nthreads()]
+	ies = [Array{ComplexF64}(undef, nn) for t = 1:Threads.nthreads()]
+	yns = [Array{ComplexF64}(undef, (nn,nn)) for t = 1:Threads.nthreads()]
+    Threads.@threads for f = 1:nf
+		t = Threads.threadid()
+		zl = zls[t]
+		zt = zts[t]
+		ie = ies[t]
+		yn = yns[t]
+        jw = 1.0im * TWO_PI * freq[f]
+        kappa = σ1 + jw * epsr * eps0
+        k1 = sqrt(jw * mu0 * mur * kappa)
+        kappa_air = jw * eps0
+        ref_t = (kappa - kappa_air)/(kappa + kappa_air)
+        ref_l = ref_t
+		if mhem
+			iwu_4pi = jw * mur * mu0 / (4π)
+        	one_4pik = 1 / (4π * kappa)
+			for k = 1:ns
+				for i = k:ns
+					rbar = norm(collect(electrodes[i].middle_point)
+					            - collect(electrodes[k].middle_point))
+					exp_gr = exp(-k1 * rbar)
+					zl[i,k] = exp_gr * potzl[i,k]
+					zt[i,k] = exp_gr * potzt[i,k]
+					rbar = norm(collect(electrodes[i].middle_point)
+					            - collect(images[k].middle_point))
+					exp_gr = exp(-k1 * rbar)
+					zl[i,k] += ref_l * exp_gr * potzli[i,k]
+					zt[i,k] += ref_t * exp_gr * potzti[i,k]
+					zl[i,k] *= iwu_4pi
+					zt[i,k] *= one_4pik
+				end
+			end
+		else
+		    calculate_impedances!(zl, zt, electrodes, k1, jw, mur, kappa, max_eval,
+			                      req_abs_error, req_rel_error, INTG_DOUBLE)
+            impedances_images!(zl, zt, electrodes, images, k1, jw, mur, kappa,
+                               ref_l, ref_t, max_eval, req_abs_error,
+                               req_rel_error, INTG_DOUBLE)
+		end
+		fill_impedance_adm!(yn, zl, zt, a, b)
+		ie .= 0.0
+		ie[inj_node] = 1.0
+		solve_admittance!(yn, ie)
+		zh[f] = ie[inj_node]
     end
-
-    #mA, mB = incidence(electrodes, nodes);
-    #mAT = transpose(mA);
-    #mBT = transpose(mB);
-    #exci = zeros(ComplexF64, num_nodes);
-    #exci[inj_node] = 1.0;
-    zh = zeros(ComplexF64, nf);
-    we = fill_incidence_imm(electrodes, nodes);
-    ie = zeros(ComplexF64, size(we)[1]);
-    ie[inj_node] = 1.0;
-    ye = zeros(ComplexF64, num_nodes, num_nodes);
-    ## Frequency loop
-    for i = 1:nf
-        #println("i = ", i)
-        jw = 1.0im*2*pi*freq[i];
-        kappa = sigma1 + jw*epsr*eps0;
-        k1 = sqrt(jw*mu0*kappa);
-        zl, zt = calculate_impedances(electrodes, k1, jw, mur, kappa,
-                                      max_eval, req_abs_error, req_rel_error,
-                                      error_norm, intg_type);
-        kappa_air = jw*eps0;
-        ref_t = (kappa - kappa_air)/(kappa + kappa_air);
-        ref_l = ref_t;
-        zl, zt = impedances_images(electrodes, images, zl, zt, k1, jw, mur, kappa,
-                                   ref_l, ref_t, max_eval, req_abs_error,
-                                   req_rel_error, error_norm, intg_type);
-        fill_impedance_imm!(we, ns, num_nodes, zl, zt, ye);
-        u, il, it = solve_immittance(we, ie, ns, num_nodes);
-        zh[i] = u[inj_node];
-        #yn = mAT*inv(zt)*mA + mBT*inv(zl)*mB;
-        #vn = yn\exci;
-        #zh[i] = vn[inj_node];
-    end;
     return zh
-end;
+end
 
-intg_type = INTG_DOUBLE;
-nf = 150;
-freq = exp10.(range(2, stop=6.4, length=nf)); #logspace
-zh = zeros(ComplexF64, (nf, 5)); #Julia is Column Major.
-i = 1;
-tot_time = @timed for gs in [10, 20, 30, 60, 120]
-    println("gs = ", gs)
-    global zh[:,i] = @time simulate(gs, nf, intg_type);
-    global i += 1;
-end;
-println("total elapsed time: ", tot_time[2]/60, " min")
+nf = 100;
+freq = exp10.(range(2, stop=6.4, length=nf));  #logspace
+nfrac = 10;
+mhem = true;
+gs_arr = [10, 20, 30, 60, 120];  # arrays of grid size
+#gs_arr = [10, 20, 30, 60];  # arrays of grid size
+ng = length(gs_arr);
+zh = Array{ComplexF64}(undef, nf, ng);
+simulate(10, 2, freq, true);  # force precompilation
+for i = 1:ng
+	gs = gs_arr[i]
+	println("\nGS = $(gs)")
+	@time zh[:,i] = simulate(gs, nfrac, freq, mhem)
+end
 
-plot(freq, [map(i -> abs(i), zh[:,k]) for k=1:5],
-     xaxis=:log, xlabel="f (Hz)", ylabel="|Zin| (Ohms)",
-     title="Harmonic Impedance",
-     label=["GS 10" "GS 20" "GS 30" "GS 60" "GS 120"])
-plot(freq, [map(i -> angle(i)*180/pi, zh[:,k]) for k=1:5],
-     xaxis=:log, xlabel="f (Hz)", ylabel="phase Zin (deg)",
-     title="Harmonic Impedance",
-     label=["GS 10" "GS 20" "GS 30" "GS 60" "GS 120"])
+begin
+	p1 = plot(xaxis=:log, legend=:topleft, xlabel="f (Hz)", ylabel="|Zh (Ω)|")
+	for i = 1:ng
+		plot!(freq, abs.(zh[:,i]), label=join(["GS ", gs_arr[i]]))
+	end
+	display(p1)
+end
+
+begin
+	p2 = plot(xaxis=:log, legend=:topleft, xlabel="f (Hz)", ylabel="Phase Zh (deg)")
+	for i = 1:ng
+		plot!(freq, 180/π*angle.(zh[:,i]), label=join(["GS ", gs_arr[i]]))
+	end
+	display(p2)
+end
