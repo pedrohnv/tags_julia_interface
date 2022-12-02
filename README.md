@@ -1,2 +1,1 @@
-# hp_hem_julia
-Julia interface to the [hp_hem](https://github.com/pedrohnv/hp_hem) (High Performance Hybrid Electromagnetic Model).
+Julia interface to the [TAGS](https://github.com/pedrohnv/transient-analysis-grounding-systems) (Transient Analysis of Grounding Systems).
